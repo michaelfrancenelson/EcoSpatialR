@@ -1,0 +1,306 @@
+---
+title: "Parameterize an Albers Equal Area projection"
+author: "Michael France Nelson"
+date: "May 11, 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+require(ggplot2)
+require(sf)
+require(sp)
+# require(raster)
+```
+
+
+# This page describes how to choose appropriate parameters for an Albers Equal Area conic projection for a region of interest.
+
+
+# Scenario
+
+- You want to choose an appropriate Albers Equal Area projection for some spatial data.
+- You need a practical way to choose parameter values use for the projection, based on the locaiton of your data.
+
+
+# Summary
+
+Use the following steps to find the four parameters you need to define an acceptable Albers Equal Area projection for your data:
+
+<ol>
+<li> Get the lat/long coordinates of the bounding box of your data </li>
+<li> Calculate:</li><ol>
+<li> The longitude at the midpoint of the bounding box </li>
+<li> The latitude at the midpoint of the bounding box </li>
+<li> The min and max latitudes of the bounding box </li></ol>
+</ol>
+
+The four parameters you need are:
+
+- `lat_1` = min latitude of the bounding box + 1/6 latitude range
+- `lat_2` = max latitude of the bounding box - 1/6 latitude range
+- `lat_0` = the latitude at the midpoint
+- `lon_0` = the longitude at the midpoint
+
+Assemble the proj4 string using your parameter values:
+
+“+proj=aea +lat_1=_____ +lat_2=_____ +lat_0=_____ +lon_0=_____”
+
+
+
+
+# Background {.tabset}
+
+## proj4
+
+To see the proj4 string format, here's an example (the AEA projection used by USGS)
+
+"+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=37.5 +lon_0=-96 +x_0=0 +y_0=0 +ellps=GRS80 +datum=NAD83 +units=m +no_defs"
+
+This example has values for all of the parameters, optional and required.
+
+
+
+
+## Required parameters {.tabset}
+
+First standard parallel.
+
+- Format: +lat_1=<value>
+- Defaults to 0.0.
+
+Second standard parallel.
+
+- Format: +lat_2=<value>
+- Defaults to 0.0.
+
+
+
+
+## Optional parameters  {.tabset}
+
+### Longitude of projection center.
+
+- Format: +lon_0=<value>
+- Defaults to 0.0.
+
+### Latitude of projection center.
+
+- Format: +lat_0=<value>
+- Defaults to 0.0.
+
+### Ellipsoid
+
+- Format: +ellps=<value>
+- Defaults to “GRS80”.
+
+### Radius of the sphere
+
+Given in meters.
+
+If used in conjunction with +ellps +R takes precedence.
+
+- Format +R=<value>
+
+### False easting.
+
+- Format: +x_0=<value>
+- Defaults to 0.0.
+
+### False northing.
+
+- Format: +y_0=<value>
+- Defaults to 0.0.
+
+
+
+
+## Some references
+
+https://proj.org/operations/projections/aea.html
+https://www.bluemarblegeo.com/knowledgebase/GeoCalcPBW/Content/ClassDef/Projection/Projections/AlbersEqualArea.html
+http://www.georeference.org/doc/albers_conical_equal_area.htm
+
+
+
+
+# Data Setup
+
+We'll use polygon data for the state borders of Massachusetts as an example data set.
+
+Package `spData` has an `sf` object containing polygon data for all the US State borders.
+
+```{r}
+require(spData)
+mass_border_sf = subset(us_states, NAME == "Massachusetts")
+ggplot(mass_border_sf) + geom_sf()
+```
+
+We'll make a `SpatialPolygonsDataFrame` object to demo the procedure in both the `spatial` and `sf` paradigms
+```{r}
+mass_border_sp = as(mass_border_sf, "Spatial")
+plot(mass_border_sp)
+```
+
+We can check the current projection:
+```{r}
+st_crs(mass_border_sf)
+proj4string(mass_border_sp)
+```
+
+
+
+
+
+
+# Procedure {.tabset}
+
+
+## Determine the lon/lat values of the bounding box of your area of interest
+
+```{r}
+bbox(mass_border_sp)
+st_bbox(mass_border_sf)
+```
+
+## The "one-sixth" rule {.tabset}
+
+A rule of thumb is to choose standard parallels at 1/6 and 5/6 the range of latitudes.
+
+These standard parallels are the required parameters to specify an Albers Equal Area projection:
+
+### In `sp`
+
+`bbox()` returns the bounding box coordinates in a table.
+We can access the `ymin` and `ymax` slots using array indices:
+
+`extent()` returns an **S4** `Extent` object.  We can access the `ymin` and `ymax` slots using the `@` symbol:
+
+```{r one_sixth_rule_sp}
+
+bbox(mass_border_sp)[1, ]
+
+# diff(bbox(mass_border_sp)[2, ])
+# yrange_sp = ymax_sp - ymin_sp
+
+bbox_mass_sp = bbox(mass_border_sp)
+
+ymin_sp = bbox_mass_sp[2, 1]
+ymax_sp = bbox_mass_sp[2, 2]
+yrange_sp = ymax_sp - ymin_sp
+
+# yrange_sp = diff(bbox(mass_border_sp)[2, ])
+
+proj4_aea_sp =
+  paste0(
+    "+proj=aea",
+    " +lat_1=",
+    ymin_sp + yrange_sp / 6,
+    " +lat_2=",
+    ymax_sp - yrange_sp / 6)
+```
+
+
+
+### In `sf`
+
+The `st` bbox implementation does not return a `S4` object, but we can get the y range using the dollar sign:
+
+```{r one_sixth_rule_sf}
+ymin_sf = st_bbox(mass_border_sf)$ymin
+ymax_sf = st_bbox(mass_border_sf)$ymax
+
+yrange_sf = ymax_sf - ymin_sf
+
+proj4_aea_sf =
+  paste0(
+    "+proj=aea",
+    " +lat_1=",
+    ymin_sf + yrange_sf / 6,
+    " +lat_2=",
+    ymax_sf - yrange_sf / 6)
+```
+
+
+
+### Plot
+
+Plot to check if it worked:
+
+```{r}
+plot(spTransform(mass_border_sp, proj4_aea_sp))
+ggplot(st_transform(mass_border_sf, proj4_aea_sp)) + geom_sf()
+```
+
+Something's wrong!
+
+
+## Specify projection center
+
+We didn't specify the projection center longitude or latitude.  Both default to 0, which is nowhere near Massachusetts!
+
+
+For simplicity, use the long/lat coords in the center of the bounding box.
+
+In `sp`:
+
+```{r}
+mean(bbox_mass_sp[1, ])
+mean(bbox_mass_sp[2, ])
+```
+
+In `sf`:
+
+```{r}
+bbox_mass = st_bbox(mass_border_sp)
+mean(bbox_mass$xmin, bbox_mass$xmax)
+mean(bbox_mass$ymin, bbox_mass$ymax)
+```
+
+
+Append the parameters to our existing projections:
+
+```{r}
+proj4_aea_sp_2 = paste0(
+  proj4_aea_sp,
+  " +lat_0=", 
+  mean(bbox_mass_sp[2, ]),
+  " +lon_0=", 
+  mean(bbox_mass_sp[1, ]))
+
+proj4_aea_sf_2 = paste0(
+  proj4_aea_sf,
+  " +lat_0=", 
+  mean(bbox_mass$ymin, bbox_mass$ymax),
+  " +lon_0=", 
+  mean(bbox_mass$xmin, bbox_mass$xmax))
+```
+
+
+
+## Plot Again
+
+```{r}
+plot(spTransform(mass_border_sp, proj4_aea_sp_2))
+ggplot(st_transform(mass_border_sf, proj4_aea_sf_2)) + geom_sf()
+```
+
+Success!
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
